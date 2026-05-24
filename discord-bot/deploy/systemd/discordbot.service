@@ -1,0 +1,17 @@
+[Unit]
+Description=Discord Bridge API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=discordbot
+Group=discordbot
+WorkingDirectory=/opt/discordbot
+EnvironmentFile=/opt/discordbot/.env
+ExecStart=/opt/kusanagi/bin/python3 /opt/discordbot/main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
