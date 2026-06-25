@@ -2138,7 +2138,7 @@ function sevendtd_nb_get_shared_styles() {
 	.sevendtd-nexus-action-primary{background:#1e4c3c;color:#fff !important;padding:6px 12px;border-radius:999px;border-bottom:none !important}
 	.sevendtd-nexus-action-primary:hover{background:#2a6a52}
 	.sevendtd-nexus-action-sep{color:#9fb4aa}
-	.sevendtd-nexus-summary{margin:8px 0;line-height:1.6}
+	.sevendtd-nexus-summary{margin:8px 0;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 	.sevendtd-nexus-preset-row{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 	.sevendtd-nexus-preset-row a{display:inline-block;padding:6px 10px;border:1px solid #c8d8cf;border-radius:999px;background:#fff;text-decoration:none;color:#1e4c3c;font-size:12px;font-weight:700}
 	.sevendtd-nexus-memo{margin-top:10px}
@@ -2354,7 +2354,7 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 			$actions[] = '<a class="sevendtd-nexus-action-primary" href="' . esc_url( get_permalink( $article_id ) ) . '">📝 日本語解説を読む</a>';
 		}
 		$actions[] = '<a href="' . esc_url( $discussion_url ) . '">このMODを語る</a>';
-		$actions[] = '<a href="' . esc_url( $mod_url ) . '" target="_blank" rel="noopener noreferrer">Nexus 原ページへ ↗</a>';
+		// Nexus 原ページへはカードタイトルがリンク済みのため、アクション側の重複リンクは省略。
 		$actions_html = '<div class="sevendtd-nexus-actions">' . implode( '<span class="sevendtd-nexus-action-sep"> / </span>', $actions ) . '</div>';
 
 		// 記事抜粋（日本語）を表示しているときは Nexus 原文を title 属性で添える（透明性のため）。
@@ -2367,7 +2367,6 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 			. ( ! empty( $args['compact_meta'] ) ? $meta_html : '' )
 			. '<p class="sevendtd-nexus-summary"' . $summary_attr . '>' . esc_html( $summary ) . '</p>'
 			. $indicators_html
-			. ( empty( $args['compact_meta'] ) ? $meta_html : '' )
 			. $actions_html
 			. $memo_html
 			. '</article>';
