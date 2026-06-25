@@ -30,7 +30,7 @@ function sevendtd_nb_activate_plugin() {
  */
 function sevendtd_nb_get_default_settings() {
 	return array(
-		'api_base'                     => 'https://api.nexusmods.com/v1',
+		'api_base'                     => 'https://api.nexusmods.com/v2/graphql',
 		'api_key'                      => '',
 		'application_name'             => '7DTD Nexus Mod Notifier',
 		'application_version'          => '0.1.0-review',
@@ -186,12 +186,12 @@ function sevendtd_nb_render_settings_page() {
 			<?php settings_fields( 'sevendtd_nb_settings_group' ); ?>
 			<table class="form-table" role="presentation">
 				<tr>
-					<th scope="row"><label for="sevendtd_nb_api_base">API Base URL</label></th>
-					<td><input id="sevendtd_nb_api_base" name="sevendtd_nb_settings[api_base]" type="url" class="regular-text" value="<?php echo esc_attr( (string) $settings['api_base'] ); ?>"></td>
+					<th scope="row"><label for="sevendtd_nb_api_base">GraphQL Endpoint</label></th>
+					<td><input id="sevendtd_nb_api_base" name="sevendtd_nb_settings[api_base]" type="url" class="regular-text" value="<?php echo esc_attr( (string) $settings['api_base'] ); ?>"><p class="description">公開 discovery は Nexus GraphQL V2（<code>https://api.nexusmods.com/v2/graphql</code>）を使用します。API キー不要・公開データのみ取得します。</p></td>
 				</tr>
 				<tr>
-					<th scope="row"><label for="sevendtd_nb_api_key">API Key</label></th>
-					<td><input id="sevendtd_nb_api_key" name="sevendtd_nb_settings[api_key]" type="password" class="regular-text" value="<?php echo esc_attr( (string) $settings['api_key'] ); ?>"></td>
+					<th scope="row"><label for="sevendtd_nb_api_key">API Key（任意・未使用）</label></th>
+					<td><input id="sevendtd_nb_api_key" name="sevendtd_nb_settings[api_key]" type="password" class="regular-text" value="<?php echo esc_attr( (string) $settings['api_key'] ); ?>"><p class="description">公開検索では使用しません（AUP 準拠: サーバー側にキーを保存・自動利用しない）。本人確認はユーザー自身のキーをその場限りで使います。空欄で構いません。</p></td>
 				</tr>
 				<tr>
 					<th scope="row"><label for="sevendtd_nb_application_name">Application Name</label></th>
@@ -295,23 +295,6 @@ function sevendtd_nb_get_request_headers() {
 }
 
 /**
- * Nexus API 経由の情報収集が有効か返す。
- *
- * 既定は停止。正式許可後は wp-config.php で
- * define( 'SEVENDTD_NB_ENABLE_API_COLLECTION', true );
- * を設定して再開する。
- *
- * @return bool
- */
-function sevendtd_nb_is_api_collection_enabled() {
-	if ( defined( 'SEVENDTD_NB_ENABLE_API_COLLECTION' ) ) {
-		return (bool) SEVENDTD_NB_ENABLE_API_COLLECTION;
-	}
-
-	return false;
-}
-
-/**
  * API の GET リクエストを行う。
  *
  * @param string              $path      API パス.
@@ -340,13 +323,6 @@ function sevendtd_nb_request_json( $path, array $query = array(), $cache_key = '
 				'cached' => true,
 			);
 		}
-	}
-
-	if ( ! sevendtd_nb_is_api_collection_enabled() ) {
-		return array(
-			'ok'      => false,
-			'message' => 'Nexus API 経由の情報収集は一時停止中です。',
-		);
 	}
 
 	$base_url = untrailingslashit( (string) $settings['api_base'] );
@@ -409,20 +385,214 @@ function sevendtd_nb_get_game_domain() {
  *
  * @return array<int,array<string,mixed>>
  */
-function sevendtd_nb_get_merged_feed_mods() {
-	$settings    = sevendtd_nb_get_settings();
+/**
+ * Nexus GraphQL V2 公開エンドポイント URL を返す（API キー不要・公開データのみ）。
+ *
+ * @return string
+ */
+function sevendtd_nb_get_graphql_endpoint() {
+	$settings = sevendtd_nb_get_settings();
+	$base     = trim( (string) $settings['api_base'] );
+	if ( '' === $base || false === strpos( $base, 'graphql' ) ) {
+		$base = 'https://api.nexusmods.com/v2/graphql';
+	}
+	return $base;
+}
+
+/**
+ * GraphQL V2 へ POST する。
+ *
+ * 公開データのみを取得し、API キーは送らない（AUP 準拠: サーバー側キー保存・自動利用なし）。
+ *
+ * @param string              $query     GraphQL クエリ.
+ * @param array<string,mixed> $variables 変数.
+ * @param string              $cache_key キャッシュキー（重複リクエスト削減目的）.
+ * @param int                 $ttl       キャッシュ秒数.
+ *
+ * @return array<string,mixed>
+ */
+function sevendtd_nb_gql_request( $query, array $variables = array(), $cache_key = '', $ttl = 0 ) {
+	$settings = sevendtd_nb_get_settings();
+
+	if ( '' !== $cache_key && $ttl > 0 ) {
+		$cached = get_transient( $cache_key );
+		if ( false !== $cached && is_array( $cached ) ) {
+			return array(
+				'ok'     => true,
+				'data'   => $cached,
+				'cached' => true,
+			);
+		}
+	}
+
+	$response = wp_remote_post(
+		sevendtd_nb_get_graphql_endpoint(),
+		array(
+			'timeout' => (int) $settings['timeout'],
+			'headers' => array(
+				'Content-Type'        => 'application/json',
+				'Accept'              => 'application/json',
+				'User-Agent'          => (string) $settings['user_agent'],
+				'Application-Name'    => (string) $settings['application_name'],
+				'Application-Version' => (string) $settings['application_version'],
+			),
+			'body'    => wp_json_encode(
+				array(
+					'query'     => $query,
+					'variables' => (object) $variables,
+				)
+			),
+		)
+	);
+
+	if ( is_wp_error( $response ) ) {
+		return array(
+			'ok'      => false,
+			'message' => 'Nexus GraphQL API への接続に失敗しました。',
+			'error'   => $response->get_error_message(),
+		);
+	}
+
+	$code = (int) wp_remote_retrieve_response_code( $response );
+	$body = (string) wp_remote_retrieve_body( $response );
+	$json = json_decode( $body, true );
+
+	if ( $code < 200 || $code >= 300 || ! is_array( $json ) || isset( $json['errors'] ) || ! isset( $json['data'] ) ) {
+		return array(
+			'ok'      => false,
+			'message' => 'Nexus GraphQL API の応答が不正です。',
+			'status'  => $code,
+		);
+	}
+
+	if ( '' !== $cache_key && $ttl > 0 ) {
+		set_transient( $cache_key, $json['data'], $ttl );
+	}
+
+	return array(
+		'ok'   => true,
+		'data' => $json['data'],
+	);
+}
+
+/**
+ * GraphQL の Mod ノードをレガシー REST 互換の配列へ変換する（表示層を無改修で再利用するため）。
+ *
+ * @param array<string,mixed> $node GraphQL Mod ノード.
+ *
+ * @return array<string,mixed>
+ */
+function sevendtd_nb_map_gql_mod( array $node ) {
 	$game_domain = sevendtd_nb_get_game_domain();
-	$ttl         = (int) $settings['cache_ttl'];
-	$sources     = array(
-		'latest_updated' => '/games/' . $game_domain . '/mods/latest_updated.json',
-		'latest_added'   => '/games/' . $game_domain . '/mods/latest_added.json',
-		'trending'       => '/games/' . $game_domain . '/mods/trending.json',
+	$mod_id      = isset( $node['modId'] ) ? (int) $node['modId'] : 0;
+	$uploader    = ( isset( $node['uploader'] ) && is_array( $node['uploader'] ) && isset( $node['uploader']['name'] ) ) ? (string) $node['uploader']['name'] : '';
+	$author      = isset( $node['author'] ) && '' !== (string) $node['author'] ? (string) $node['author'] : $uploader;
+	$cat         = ( isset( $node['modCategory'] ) && is_array( $node['modCategory'] ) ) ? $node['modCategory'] : array();
+	$cat_name    = isset( $cat['name'] ) && '' !== (string) $cat['name'] ? (string) $cat['name'] : ( isset( $node['category'] ) ? (string) $node['category'] : '' );
+	$cat_id      = isset( $cat['categoryId'] ) ? (int) $cat['categoryId'] : 0;
+	$updated_at  = isset( $node['updatedAt'] ) ? (string) $node['updatedAt'] : '';
+	$mod_url     = $mod_id > 0
+		? 'https://www.nexusmods.com/' . rawurlencode( $game_domain ) . '/mods/' . $mod_id
+		: 'https://www.nexusmods.com/' . rawurlencode( $game_domain );
+
+	return array(
+		'mod_id'        => $mod_id,
+		'name'          => isset( $node['name'] ) ? (string) $node['name'] : '',
+		'summary'       => isset( $node['summary'] ) ? (string) $node['summary'] : '',
+		'version'       => isset( $node['version'] ) ? (string) $node['version'] : '',
+		'author'        => $author,
+		'uploaded_by'   => '' !== $uploader ? $uploader : $author,
+		'user'          => '' !== $uploader ? $uploader : $author,
+		'category_id'   => $cat_id,
+		'category_name' => $cat_name,
+		'category'      => $cat_name,
+		'picture_url'   => isset( $node['pictureUrl'] ) ? (string) $node['pictureUrl'] : '',
+		'downloads'     => isset( $node['downloads'] ) ? (int) $node['downloads'] : 0,
+		'endorsements'  => isset( $node['endorsements'] ) ? (int) $node['endorsements'] : 0,
+		'updated_at'    => $updated_at,
+		'updated_date'  => $updated_at,
+		'created_at'    => isset( $node['createdAt'] ) ? (string) $node['createdAt'] : '',
+		'url'           => $mod_url,
+		'mod_url'       => $mod_url,
+	);
+}
+
+/**
+ * GraphQL で MOD を取得し、レガシー互換の配列群で返す共通関数。
+ *
+ * @param array<string,mixed>           $filter    追加 ModsFilter 条件.
+ * @param array<int,array<string,mixed>> $sort      ModsSort 配列.
+ * @param int                           $limit     件数.
+ * @param string                        $cache_key キャッシュキー.
+ * @param int                           $ttl       キャッシュ秒数.
+ *
+ * @return array<string,mixed>
+ */
+function sevendtd_nb_gql_fetch_mods( array $filter, array $sort = array(), $limit = 12, $cache_key = '', $ttl = 0 ) {
+	$limit = max( 1, min( 50, absint( $limit ) ) );
+
+	$base_filter = array(
+		'gameDomainName' => array(
+			'value' => sevendtd_nb_get_game_domain(),
+			'op'    => 'EQUALS',
+		),
+		'adultContent'   => array(
+			'value' => false,
+			'op'    => 'EQUALS',
+		),
+	);
+	$filter = array_merge( $base_filter, $filter );
+
+	$query = 'query($filter: ModsFilter, $sort: [ModsSort!], $count: Int!) {'
+		. ' mods(filter: $filter, sort: $sort, count: $count, offset: 0) {'
+		. ' nodes { modId name summary version author uploader { name } updatedAt createdAt endorsements downloads pictureUrl category modCategory { categoryId name } }'
+		. ' totalCount } }';
+
+	$variables = array(
+		'filter' => (object) $filter,
+		'count'  => $limit,
+	);
+	if ( ! empty( $sort ) ) {
+		$variables['sort'] = $sort;
+	}
+
+	$result = sevendtd_nb_gql_request( $query, $variables, $cache_key, $ttl );
+
+	if ( empty( $result['ok'] ) || empty( $result['data']['mods']['nodes'] ) || ! is_array( $result['data']['mods']['nodes'] ) ) {
+		return array(
+			'ok'      => false,
+			'data'    => array(),
+			'message' => isset( $result['message'] ) ? (string) $result['message'] : 'MOD 取得に失敗しました。',
+		);
+	}
+
+	$mods = array();
+	foreach ( $result['data']['mods']['nodes'] as $node ) {
+		if ( is_array( $node ) ) {
+			$mods[] = sevendtd_nb_map_gql_mod( $node );
+		}
+	}
+
+	return array(
+		'ok'    => true,
+		'data'  => $mods,
+		'total' => isset( $result['data']['mods']['totalCount'] ) ? (int) $result['data']['mods']['totalCount'] : count( $mods ),
+	);
+}
+
+function sevendtd_nb_get_merged_feed_mods() {
+	$settings = sevendtd_nb_get_settings();
+	$ttl      = (int) $settings['cache_ttl'];
+	$sources  = array(
+		'latest_updated' => array( array( 'updatedAt' => array( 'direction' => 'DESC' ) ) ),
+		'latest_added'   => array( array( 'createdAt' => array( 'direction' => 'DESC' ) ) ),
+		'trending'       => array( array( 'endorsements' => array( 'direction' => 'DESC' ) ) ),
 	);
 
 	$merged = array();
 
-	foreach ( $sources as $label => $path ) {
-		$result = sevendtd_nb_request_json( $path, array(), 'sevendtd_nb_' . $label, $ttl );
+	foreach ( $sources as $label => $sort ) {
+		$result = sevendtd_nb_gql_fetch_mods( array(), $sort, 24, 'sevendtd_nb_gql_' . $label, $ttl );
 		if ( empty( $result['ok'] ) || empty( $result['data'] ) || ! is_array( $result['data'] ) ) {
 			continue;
 		}
@@ -432,8 +602,8 @@ function sevendtd_nb_get_merged_feed_mods() {
 				continue;
 			}
 
-			$mod_id = sevendtd_nb_get_mod_value( $row, array( 'mod_id', 'id' ) );
-			$key    = '' !== $mod_id ? (string) $mod_id : md5( wp_json_encode( $row ) );
+			$mod_id = isset( $row['mod_id'] ) ? (string) $row['mod_id'] : '';
+			$key    = '' !== $mod_id && '0' !== $mod_id ? $mod_id : md5( wp_json_encode( $row ) );
 			if ( ! isset( $merged[ $key ] ) ) {
 				$merged[ $key ] = $row;
 			}
@@ -449,44 +619,38 @@ function sevendtd_nb_get_merged_feed_mods() {
  * @return array<string,mixed>
  */
 function sevendtd_nb_get_categories() {
-	$settings    = sevendtd_nb_get_settings();
-	$game_domain = sevendtd_nb_get_game_domain();
-	$result      = sevendtd_nb_request_json(
-		'/games/' . $game_domain . '/categories.json',
+	$settings = sevendtd_nb_get_settings();
+	$ttl      = (int) $settings['category_cache_ttl'];
+
+	// GraphQL には「ゲームの MOD カテゴリ一覧」専用クエリが無いため、人気上位サンプルの
+	// modCategory(id+name) からカテゴリ集合を導出する（カテゴリ ID は modCategory.categoryId）。
+	$sample = sevendtd_nb_gql_fetch_mods(
 		array(),
-		'sevendtd_nb_categories',
-		(int) $settings['category_cache_ttl']
+		array( array( 'endorsements' => array( 'direction' => 'DESC' ) ) ),
+		50,
+		'sevendtd_nb_gql_category_sample',
+		$ttl
 	);
-	$feed_derived   = sevendtd_nb_derive_categories_from_feed( sevendtd_nb_get_merged_feed_mods() );
-	$sample_derived = array();
 
-	if ( ! empty( $result['ok'] ) && ! empty( $result['data'] ) && is_array( $result['data'] ) ) {
-		$normalized = sevendtd_nb_merge_category_rows( array_values( array_filter( $result['data'], 'is_array' ) ), $feed_derived );
-		if ( count( $normalized ) <= 1 ) {
-			$sample_derived = sevendtd_nb_get_categories_from_search_samples();
-			$normalized     = sevendtd_nb_merge_category_rows( $normalized, $sample_derived );
-		}
+	$rows = ( ! empty( $sample['ok'] ) && ! empty( $sample['data'] ) )
+		? sevendtd_nb_derive_categories_from_feed( $sample['data'] )
+		: array();
+	$rows = sevendtd_nb_merge_category_rows(
+		$rows,
+		sevendtd_nb_derive_categories_from_feed( sevendtd_nb_get_merged_feed_mods() ),
+		sevendtd_nb_get_categories_from_search_samples()
+	);
 
+	if ( ! empty( $rows ) ) {
 		return array(
 			'ok'   => true,
-			'data' => $normalized,
-		);
-	}
-
-	$sample_derived = sevendtd_nb_get_categories_from_search_samples();
-	$derived        = sevendtd_nb_merge_category_rows( $feed_derived, $sample_derived );
-
-	if ( ! empty( $derived ) ) {
-		return array(
-			'ok'       => true,
-			'data'     => $derived,
-			'fallback' => true,
+			'data' => $rows,
 		);
 	}
 
 	return array(
 		'ok'      => false,
-		'message' => isset( $result['message'] ) ? (string) $result['message'] : 'カテゴリ取得に失敗しました。',
+		'message' => 'カテゴリ取得に失敗しました。',
 		'data'    => array(),
 	);
 }
@@ -546,44 +710,23 @@ function sevendtd_nb_merge_category_rows( ...$groups ) {
  * @return array<int,array<string,mixed>>
  */
 function sevendtd_nb_get_categories_from_search_samples() {
-	$settings    = sevendtd_nb_get_settings();
-	$game_domain = sevendtd_nb_get_game_domain();
-	$presets     = sevendtd_nb_get_search_presets();
-	$terms_list  = array( '' );
+	$settings = sevendtd_nb_get_settings();
+	$ttl      = (int) $settings['category_cache_ttl'];
 
-	foreach ( $presets as $preset ) {
-		$preset_terms = trim( (string) ( isset( $preset['query'] ) ? $preset['query'] : '' ) );
-		if ( '' !== $preset_terms ) {
-			$terms_list[] = $preset_terms;
-		}
-	}
-
-	$terms_list = array_values( array_unique( $terms_list ) );
-	$terms_list = array_slice( $terms_list, 0, 4 );
+	// GraphQL の複数ソート（人気/最新/新着）サンプルから modCategory を集約してカテゴリを補完する。
+	$sorts = array(
+		'pop'  => array( array( 'endorsements' => array( 'direction' => 'DESC' ) ) ),
+		'dl'   => array( array( 'downloads' => array( 'direction' => 'DESC' ) ) ),
+		'new'  => array( array( 'createdAt' => array( 'direction' => 'DESC' ) ) ),
+	);
 
 	$categories = array();
-	foreach ( $terms_list as $terms ) {
-		$query = array(
-			'include_adult' => 'false',
-			'page_size'     => 24,
-		);
-		if ( '' !== $terms ) {
-			$query['terms'] = $terms;
-		}
-
-		$cache_key = 'sevendtd_nb_categories_sample_' . md5( wp_json_encode( $query ) );
-		$result    = sevendtd_nb_request_json(
-			'/games/' . $game_domain . '/mods/search.json',
-			$query,
-			$cache_key,
-			(int) $settings['category_cache_ttl']
-		);
-
+	foreach ( $sorts as $label => $sort ) {
+		$result = sevendtd_nb_gql_fetch_mods( array(), $sort, 50, 'sevendtd_nb_gql_catsample_' . $label, $ttl );
 		if ( empty( $result['ok'] ) || empty( $result['data'] ) || ! is_array( $result['data'] ) ) {
 			continue;
 		}
-
-		$categories = sevendtd_nb_merge_category_rows( $categories, sevendtd_nb_derive_categories_from_feed( array_values( array_filter( $result['data'], 'is_array' ) ) ) );
+		$categories = sevendtd_nb_merge_category_rows( $categories, sevendtd_nb_derive_categories_from_feed( $result['data'] ) );
 	}
 
 	return $categories;
@@ -605,31 +748,35 @@ function sevendtd_nb_search_mods( $terms = '', $category_id = 0, $limit = 12 ) {
 	$category_id = absint( $category_id );
 	$limit       = max( 1, min( 24, absint( $limit ) ) );
 
-	$query = array(
-		'include_adult' => 'false',
-		'page_size'     => $limit,
-	);
+	$filter = array();
+	$sort   = array( array( 'endorsements' => array( 'direction' => 'DESC' ) ) );
 
 	if ( '' !== $terms ) {
-		$query['terms'] = $terms;
+		// 名前のワイルドカード部分一致（生の語をそのまま渡す＝部分一致）。
+		$filter['name'] = array(
+			'value' => $terms,
+			'op'    => 'WILDCARD',
+		);
+		$sort = array( array( 'relevance' => array( 'direction' => 'DESC' ) ) );
 	}
 
 	if ( $category_id > 0 ) {
-		$query['category_id'] = $category_id;
+		$lookup = sevendtd_nb_get_category_lookup_map();
+		if ( isset( $lookup['by_id'][ $category_id ] ) ) {
+			$filter['categoryName'] = array(
+				'value' => (string) $lookup['by_id'][ $category_id ],
+				'op'    => 'EQUALS',
+			);
+		}
 	}
 
-	$cache_key = 'sevendtd_nb_search_' . md5( wp_json_encode( $query ) );
-	$result    = sevendtd_nb_request_json(
-		'/games/' . $game_domain . '/mods/search.json',
-		$query,
-		$cache_key,
-		(int) $settings['cache_ttl']
-	);
+	$cache_key = 'sevendtd_nb_gql_search_' . md5( wp_json_encode( array( $terms, $category_id, $limit ) ) );
+	$result    = sevendtd_nb_gql_fetch_mods( $filter, $sort, $limit, $cache_key, (int) $settings['cache_ttl'] );
 
 	if ( ! empty( $result['ok'] ) && ! empty( $result['data'] ) && is_array( $result['data'] ) ) {
 		return array(
 			'ok'   => true,
-			'data' => array_slice( array_values( array_filter( $result['data'], 'is_array' ) ), 0, $limit ),
+			'data' => array_slice( $result['data'], 0, $limit ),
 		);
 	}
 
@@ -1441,19 +1588,10 @@ function sevendtd_nb_get_category_lookup_map() {
 		return $lookup;
 	}
 
-	$settings    = sevendtd_nb_get_settings();
-	$game_domain = sevendtd_nb_get_game_domain();
-	$rows        = array();
-	$result      = sevendtd_nb_request_json(
-		'/games/' . $game_domain . '/categories.json',
-		array(),
-		'sevendtd_nb_categories_lookup',
-		(int) $settings['category_cache_ttl']
-	);
-
-	if ( ! empty( $result['ok'] ) && ! empty( $result['data'] ) && is_array( $result['data'] ) ) {
-		$rows = array_values( array_filter( $result['data'], 'is_array' ) );
-	}
+	$categories = sevendtd_nb_get_categories();
+	$rows       = ( ! empty( $categories['ok'] ) && ! empty( $categories['data'] ) && is_array( $categories['data'] ) )
+		? $categories['data']
+		: array();
 
 	$rows   = sevendtd_nb_merge_category_rows( $rows, sevendtd_nb_derive_categories_from_feed( sevendtd_nb_get_merged_feed_mods() ) );
 	$lookup = array(
@@ -1693,28 +1831,24 @@ function sevendtd_nb_get_default_feed_result( $source = 'latest_updated', $limit
 		$source = 'latest_updated';
 	}
 
-	$cache_keys = array(
-		'latest_updated' => 'sevendtd_nb_latest_updated_direct',
-		'latest_added'   => 'sevendtd_nb_latest_added_direct',
-		'trending'       => 'sevendtd_nb_trending_direct',
-	);
-	$paths      = array(
-		'latest_updated' => '/games/' . sevendtd_nb_get_game_domain() . '/mods/latest_updated.json',
-		'latest_added'   => '/games/' . sevendtd_nb_get_game_domain() . '/mods/latest_added.json',
-		'trending'       => '/games/' . sevendtd_nb_get_game_domain() . '/mods/trending.json',
+	$sorts = array(
+		'latest_updated' => array( array( 'updatedAt' => array( 'direction' => 'DESC' ) ) ),
+		'latest_added'   => array( array( 'createdAt' => array( 'direction' => 'DESC' ) ) ),
+		'trending'       => array( array( 'endorsements' => array( 'direction' => 'DESC' ) ) ),
 	);
 
-	$result = sevendtd_nb_request_json(
-		$paths[ $source ],
+	$result = sevendtd_nb_gql_fetch_mods(
 		array(),
-		$cache_keys[ $source ],
+		$sorts[ $source ],
+		$limit,
+		'sevendtd_nb_gql_direct_' . $source,
 		(int) $settings['cache_ttl']
 	);
 
 	if ( ! empty( $result['ok'] ) && ! empty( $result['data'] ) && is_array( $result['data'] ) ) {
 		return array(
 			'ok'       => true,
-			'data'     => array_slice( array_values( array_filter( $result['data'], 'is_array' ) ), 0, $limit ),
+			'data'     => array_slice( $result['data'], 0, $limit ),
 			'source'   => $source,
 			'fallback' => false,
 		);
@@ -1872,7 +2006,11 @@ function sevendtd_nb_normalize_watch_item( array $mod, array $store, $source = '
 	return array(
 		'id'           => sevendtd_nb_get_mod_key( $mod ),
 		'title'        => $title,
-		'url'          => sevendtd_nb_get_mod_url( $mod ),
+		// Discord導線をWPベースページへ向ける。get_mod_discussion_url が
+		// 議論ページ(ベースページ)を upsert で自動生成し、その permalink を返す。
+		// Nexus 原ページは nexus_url に分離(WPページ側に導線あり)。
+		'url'          => sevendtd_nb_get_mod_discussion_url( $mod ),
+		'nexus_url'    => sevendtd_nb_get_mod_url( $mod ),
 		'score'        => $score,
 		'badge'        => sevendtd_nb_get_mod_score_badge( $mod, $score ),
 		'diff'         => sevendtd_nb_get_mod_diff_label( $mod, $store ),
@@ -2960,6 +3098,30 @@ function sevendtd_nb_render_discussion_post_content( $content ) {
 
 	$output .= '</div></section>';
 
+	// ─── 詳しい解説記事（案A: articles/mod/*.md と nexus_mod_id で紐付け）───
+	$article_id = sevendtd_nb_get_linked_article_id( $mod_id );
+	if ( $article_id > 0 ) {
+		$art_url = get_permalink( $article_id );
+		$art_exc = trim( (string) get_the_excerpt( $article_id ) );
+		$output .= '<section class="sevendtd-nexus-box sevendtd-nexus-article-box">';
+		$output .= '<h3>📝 このMODの詳しい解説記事</h3>';
+		$output .= '<p style="margin:0 0 0.6em"><a class="sevendtd-nexus-discussion-btn sevendtd-nexus-discussion-btn-primary" href="' . esc_url( $art_url ) . '">' . esc_html( get_the_title( $article_id ) ) . ' を読む</a></p>';
+		if ( '' !== $art_exc ) {
+			$output .= '<p class="sevendtd-nexus-muted" style="margin:0">' . esc_html( $art_exc ) . '</p>';
+		}
+		$output .= '</section>';
+	} else {
+		// 解説記事が未作成 → リクエストボタン(mu-plugin: sevendtd-article-request が受付)。
+		$rcount = (int) get_post_meta( $post_id, '_sevendtd_article_request_count', true );
+		$output .= '<section class="sevendtd-nexus-box sevendtd-nexus-reqbox">';
+		$output .= '<h3>📝 このMODの解説記事</h3>';
+		$output .= '<p class="sevendtd-nexus-muted" style="margin:0 0 .7em">まだ解説記事はありません。読みたい方はリクエストできます（運営が記事化を検討します）。</p>';
+		$output .= '<button type="button" class="sevendtd-nexus-discussion-btn sevendtd-nexus-discussion-btn-primary sevendtd-nexus-reqbtn" data-mod="' . esc_attr( $mod_id ) . '">📝 解説記事をリクエスト</button>';
+		$output .= ' <span class="sevendtd-nexus-reqcount"' . ( $rcount > 0 ? '' : ' style="display:none"' ) . '>🙋 <span class="n">' . (int) $rcount . '</span> 人がリクエスト中</span>';
+		$output .= '<p class="sevendtd-nexus-reqmsg" role="status" style="margin:.5em 0 0;font-size:13px;color:#2c6653"></p>';
+		$output .= '</section>';
+	}
+
 	// ─── MOD 解説セクション（原文 + 日本語訳）───
 	if ( '' !== $desc ) {
 		$ja_desc = sevendtd_nb_translate_to_japanese( $desc );
@@ -3003,6 +3165,62 @@ function sevendtd_nb_render_discussion_post_content( $content ) {
 	return $output;
 }
 add_filter( 'the_content', 'sevendtd_nb_render_discussion_post_content', 25 );
+
+/**
+ * 案A: MOD ID に紐付く解説記事(articles/mod/*.md 由来の通常投稿)の ID を返す。
+ * sync_articles.php が frontmatter `nexus_mod_id` を `_sevendtd_nexus_mod_id` メタに保存する。
+ *
+ * @param string $mod_id Nexus MOD ID.
+ *
+ * @return int 公開済み記事の投稿 ID。無ければ 0。
+ */
+function sevendtd_nb_get_linked_article_id( $mod_id ) {
+	$mod_id = trim( (string) $mod_id );
+	if ( '' === $mod_id ) {
+		return 0;
+	}
+	$posts = get_posts(
+		array(
+			'post_type'      => 'post',
+			'post_status'    => 'publish',
+			'posts_per_page' => 1,
+			'fields'         => 'ids',
+			'meta_key'       => '_sevendtd_nexus_mod_id',
+			'meta_value'     => $mod_id,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+		)
+	);
+	return $posts ? (int) $posts[0] : 0;
+}
+
+/**
+ * 案A: 解説記事(通常投稿)の末尾に、対応する nexus_mod 議論ページへの逆リンクを足す。
+ *
+ * @param string $content 本文.
+ *
+ * @return string
+ */
+function sevendtd_nb_render_article_nexus_backlink( $content ) {
+	if ( ! is_singular( 'post' ) || ! in_the_loop() || ! is_main_query() ) {
+		return $content;
+	}
+	$mod_id = (string) get_post_meta( get_the_ID(), '_sevendtd_nexus_mod_id', true );
+	if ( '' === $mod_id ) {
+		return $content;
+	}
+	$disc_id = sevendtd_nb_get_mod_discussion_post_id( $mod_id );
+	if ( $disc_id <= 0 ) {
+		return $content;
+	}
+	$box  = sevendtd_nb_get_shared_styles();
+	$box .= '<section class="sevendtd-nexus-box sevendtd-nexus-article-box" style="margin-top:1.5em">';
+	$box .= '<h3>🔧 このMODのNexus情報ページ</h3>';
+	$box .= '<p style="margin:0"><a class="sevendtd-nexus-discussion-btn" href="' . esc_url( get_permalink( $disc_id ) ) . '">Nexus情報・前提/競合・コメントを見る</a></p>';
+	$box .= '</section>';
+	return $content . $box;
+}
+add_filter( 'the_content', 'sevendtd_nb_render_article_nexus_backlink', 26 );
 
 /**
  * コメントフォームにリアクション項目を追加する。
@@ -3664,8 +3882,9 @@ function sevendtd_nb_validate_nexus_identity_with_api_key( $username, $api_key )
 	}
 
 	$settings = sevendtd_nb_get_settings();
-	$api_base = rtrim( (string) $settings['api_base'], '/' );
-	$url      = $api_base . '/users/validate.json';
+	// 本人確認は「ユーザー自身のキーで、ユーザー操作起点」＝AUP 準拠。
+	// 公開 discovery 用の GraphQL とは別に、レガシー v1 の validate.json を使う。
+	$url = 'https://api.nexusmods.com/v1/users/validate.json';
 
 	$response = wp_remote_get(
 		$url,
@@ -3901,12 +4120,35 @@ function sevendtd_nb_get_mods_by_author( $username, $limit = 20 ) {
 		return array();
 	}
 
-	$lower   = sevendtd_safe_strtolower( $username );
-	$mods    = sevendtd_nb_get_merged_feed_mods();
-	$results = array();
-	$seen    = array();
+	$settings = sevendtd_nb_get_settings();
+	$lower    = sevendtd_safe_strtolower( $username );
+	$results  = array();
+	$seen     = array();
 
-	foreach ( $mods as $mod ) {
+	// 著者名で直接 GraphQL 取得（フィードに無い旧作も拾える）。
+	$direct = sevendtd_nb_gql_fetch_mods(
+		array(
+			'author' => array(
+				'value' => $username,
+				'op'    => 'EQUALS',
+			),
+		),
+		array( array( 'updatedAt' => array( 'direction' => 'DESC' ) ) ),
+		$limit,
+		'sevendtd_nb_gql_author_' . md5( $lower ),
+		(int) $settings['cache_ttl']
+	);
+	if ( ! empty( $direct['ok'] ) && ! empty( $direct['data'] ) && is_array( $direct['data'] ) ) {
+		foreach ( $direct['data'] as $mod ) {
+			$key = sevendtd_nb_get_mod_key( $mod );
+			if ( ! isset( $seen[ $key ] ) ) {
+				$seen[ $key ] = true;
+				$results[]    = $mod;
+			}
+		}
+	}
+
+	foreach ( sevendtd_nb_get_merged_feed_mods() as $mod ) {
 		$author = sevendtd_safe_strtolower(
 			sevendtd_nb_get_mod_value( $mod, array( 'uploaded_by', 'author', 'user' ) )
 		);

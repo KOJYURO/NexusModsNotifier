@@ -23,8 +23,8 @@ Nexus Mods API への直接アクセスは WordPress plugin 側に集約し、Di
 
 ## Current Status
 
-- 現在は Nexus Mods からの正式な API 利用許可待ちです。
-- そのため、サイト本番では Nexus API 経由の情報収集を一時停止した状態を前提にしています。
+- **API モデルを公開 GraphQL V2 へ移行しました（2026-06）。** Nexus Mods サポートの助言（個人キー＋サーバーキャッシュは公開アプリ非対応）を受け、discovery は `https://api.nexusmods.com/v2/graphql` の公開クエリ（**APIキー不要・登録不要・公開データのみ**）に作り替えました。詳細は `wordpress-plugin/README.md` の "Acceptable Use (AUP) compliance" を参照。
+- サーバー側に API キーを保存せず、キーによる自動ポーリングも行いません。ファイルのミラーもせず、常に原ページへのリンクを提供します。本人確認のみ「ユーザー自身のキーをその場で」使用します（AUP 準拠）。
 - この公開スナップショットでは secrets、runtime state、log、pid などの運用生成物は含めていません。
 
 ## English Summary
@@ -34,4 +34,4 @@ This repository is a review-oriented public snapshot of the Nexus Mods notificat
 - `wordpress-plugin/` is the API-facing component that talks to the Nexus Mods API and prepares WordPress-side data.
 - `discord-bot/` is the delivery component that consumes the internal WordPress watch endpoint and posts notifications to Discord.
 - Runtime secrets, logs, pid files, and generated state files are intentionally excluded.
-- The current snapshot reflects a temporary pause of Nexus API collection while official API approval is pending.
+- The discovery layer now uses the **public GraphQL V2 API with no API key or registration** (`api.nexusmods.com/v2/graphql`), per guidance from Nexus Mods Support. No personal key is stored server-side; only the user-initiated identity check uses the visitor's own key. See `wordpress-plugin/README.md` for the full AUP-compliance notes.
