@@ -2138,7 +2138,9 @@ function sevendtd_nb_get_shared_styles() {
 	.sevendtd-nexus-action-primary{background:#1e4c3c;color:#fff !important;padding:6px 12px;border-radius:999px;border-bottom:none !important}
 	.sevendtd-nexus-action-primary:hover{background:#2a6a52}
 	.sevendtd-nexus-action-sep{color:#9fb4aa}
-	.sevendtd-nexus-summary{margin:8px 0;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+	.sevendtd-nexus-summary{margin:8px 0 4px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+	.sevendtd-nexus-translate{display:inline-block;margin:0 0 8px;font-size:12px;color:#3a6f59;text-decoration:none}
+	.sevendtd-nexus-translate:hover{text-decoration:underline}
 	.sevendtd-nexus-preset-row{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 	.sevendtd-nexus-preset-row a{display:inline-block;padding:6px 10px;border:1px solid #c8d8cf;border-radius:999px;background:#fff;text-decoration:none;color:#1e4c3c;font-size:12px;font-weight:700}
 	.sevendtd-nexus-memo{margin-top:10px}
@@ -2267,10 +2269,11 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 		$article_id      = sevendtd_nb_get_linked_article_id( $mod_id_str );
 		$article_excerpt = $article_id > 0 ? trim( wp_strip_all_tags( get_the_excerpt( $article_id ) ) ) : '';
 		if ( '' !== $article_excerpt ) {
-			$summary       = mb_strimwidth( $article_excerpt, 0, 140, '…', 'UTF-8' );
+			$summary       = $article_excerpt;
 			$summary_is_ja = true;
 		} elseif ( '' !== $summary_en ) {
-			$summary       = wp_trim_words( $summary_en, 28, '...' );
+			// 全文を保持（表示は CSS で2行クランプ）し、ユーザーが自分で翻訳できるようにする。
+			$summary       = $summary_en;
 			$summary_is_ja = false;
 		} else {
 			$summary       = '紹介文はまだ取得できていません。';
@@ -2345,20 +2348,26 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 
 		$header_badges_html = ! empty( $header_badges ) ? '<div class="sevendtd-nexus-card-header">' . implode( '', $header_badges ) . '</div>' : '';
 
-		$memo_html      = '<div class="sevendtd-nexus-memo"><button type="button" class="sevendtd-nexus-memo-btn" data-mod-id="' . esc_attr( $mod_key ) . '">導入メモ: 未設定</button></div>';
 		$discussion_url = sevendtd_nb_get_mod_discussion_url( $mod );
 
-		// 概要は日本語で掴ませ、Nexus へは「記事 → 議論ページ → 原ページ」の順に誘導する（$article_id は上で算出済み）。
+		// 概要は日本語で掴ませ、Nexus へは「記事 → MOD記事ページ → 原ページ」の順に誘導する（$article_id は上で算出済み）。
 		$actions = array();
 		if ( $article_id > 0 ) {
 			$actions[] = '<a class="sevendtd-nexus-action-primary" href="' . esc_url( get_permalink( $article_id ) ) . '">📝 日本語解説を読む</a>';
 		}
-		$actions[] = '<a href="' . esc_url( $discussion_url ) . '">このMODを語る</a>';
+		$actions[] = '<a href="' . esc_url( $discussion_url ) . '">MOD記事</a>';
 		// Nexus 原ページへはカードタイトルがリンク済みのため、アクション側の重複リンクは省略。
 		$actions_html = '<div class="sevendtd-nexus-actions">' . implode( '<span class="sevendtd-nexus-action-sep"> / </span>', $actions ) . '</div>';
 
 		// 記事抜粋（日本語）を表示しているときは Nexus 原文を title 属性で添える（透明性のため）。
 		$summary_attr = ( ! empty( $summary_is_ja ) && '' !== $summary_en ) ? ' title="' . esc_attr( wp_trim_words( $summary_en, 40, '...' ) ) . '"' : '';
+
+		// 機械翻訳はしない方針のため、英語概要には「自分で翻訳」できる外部翻訳リンクを添える。
+		$translate_html = '';
+		if ( empty( $summary_is_ja ) && '' !== $summary_en ) {
+			$translate_url  = 'https://translate.google.com/?sl=en&tl=ja&op=translate&text=' . rawurlencode( $summary_en );
+			$translate_html = '<a class="sevendtd-nexus-translate" href="' . esc_url( $translate_url ) . '" target="_blank" rel="noopener noreferrer">🌐 日本語に翻訳</a>';
+		}
 
 		$items[] = '<article class="sevendtd-nexus-card">'
 			. $cover_html
@@ -2366,9 +2375,9 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 			. '<h3 class="sevendtd-nexus-card-title"><a href="' . esc_url( $mod_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( $title ) . '</a></h3>'
 			. ( ! empty( $args['compact_meta'] ) ? $meta_html : '' )
 			. '<p class="sevendtd-nexus-summary"' . $summary_attr . '>' . esc_html( $summary ) . '</p>'
+			. $translate_html
 			. $indicators_html
 			. $actions_html
-			. $memo_html
 			. '</article>';
 
 		$snapshot_store[ $mod_key ] = array(
@@ -2388,7 +2397,8 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 		return '<p class="sevendtd-nexus-muted">条件に一致する MOD がありません。</p>';
 	}
 
-	return '<div class="sevendtd-nexus-grid">' . implode( '', $items ) . '</div>' . sevendtd_nb_get_shared_scripts();
+	// 導入メモ機能は撤去したため、メモ用スクリプトは出力しない。
+	return '<div class="sevendtd-nexus-grid">' . implode( '', $items ) . '</div>';
 }
 
 /**
