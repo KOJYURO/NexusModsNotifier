@@ -2133,7 +2133,12 @@ function sevendtd_nb_get_shared_styles() {
 	.sevendtd-nexus-indicators{display:flex;gap:12px;justify-content:flex-start;font-size:12px;color:#4f635b;margin:0 0 8px}
 	.sevendtd-nexus-indicator{display:flex;align-items:center;gap:4px}
 	.sevendtd-nexus-indicator-icon{width:14px;height:14px;line-height:14px;text-align:center;font-size:11px}
+	.sevendtd-nexus-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 4px}
 	.sevendtd-nexus-actions a{display:inline-block;color:#1e4c3c;font-weight:700;text-decoration:none;border-bottom:1px solid currentColor}
+	.sevendtd-nexus-action-primary{background:#1e4c3c;color:#fff !important;padding:6px 12px;border-radius:999px;border-bottom:none !important}
+	.sevendtd-nexus-action-primary:hover{background:#2a6a52}
+	.sevendtd-nexus-action-sep{color:#9fb4aa}
+	.sevendtd-nexus-summary{margin:8px 0;line-height:1.6}
 	.sevendtd-nexus-preset-row{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 	.sevendtd-nexus-preset-row a{display:inline-block;padding:6px 10px;border:1px solid #c8d8cf;border-radius:999px;background:#fff;text-decoration:none;color:#1e4c3c;font-size:12px;font-weight:700}
 	.sevendtd-nexus-memo{margin-top:10px}
@@ -2256,7 +2261,21 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 		$mod_url         = sevendtd_nb_get_mod_url( $mod );
 		$image           = sevendtd_nb_get_mod_image_url( $mod );
 		$title           = '' !== $title ? $title : '名称未取得の MOD';
-		$summary         = '' !== $summary ? wp_trim_words( $summary, 28, '...' ) : '紹介文はまだ取得できていません。';
+		$summary_en      = $summary;
+		// 日本語サマリーは手書き解説記事の抜粋を正本にする（機械翻訳は使わない）。
+		$mod_id_str      = (string) sevendtd_nb_get_mod_value( $mod, array( 'mod_id', 'id' ) );
+		$article_id      = sevendtd_nb_get_linked_article_id( $mod_id_str );
+		$article_excerpt = $article_id > 0 ? trim( wp_strip_all_tags( get_the_excerpt( $article_id ) ) ) : '';
+		if ( '' !== $article_excerpt ) {
+			$summary       = mb_strimwidth( $article_excerpt, 0, 140, '…', 'UTF-8' );
+			$summary_is_ja = true;
+		} elseif ( '' !== $summary_en ) {
+			$summary       = wp_trim_words( $summary_en, 28, '...' );
+			$summary_is_ja = false;
+		} else {
+			$summary       = '紹介文はまだ取得できていません。';
+			$summary_is_ja = false;
+		}
 		$mod_key         = sevendtd_nb_get_mod_key( $mod );
 		$score           = sevendtd_nb_get_mod_score( $mod );
 		$score_badge     = sevendtd_nb_get_mod_score_badge( $mod, $score );
@@ -2326,18 +2345,30 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 
 		$header_badges_html = ! empty( $header_badges ) ? '<div class="sevendtd-nexus-card-header">' . implode( '', $header_badges ) . '</div>' : '';
 
-		$memo_html = '<div class="sevendtd-nexus-memo"><button type="button" class="sevendtd-nexus-memo-btn" data-mod-id="' . esc_attr( $mod_key ) . '">導入メモ: 未設定</button></div>';
+		$memo_html      = '<div class="sevendtd-nexus-memo"><button type="button" class="sevendtd-nexus-memo-btn" data-mod-id="' . esc_attr( $mod_key ) . '">導入メモ: 未設定</button></div>';
 		$discussion_url = sevendtd_nb_get_mod_discussion_url( $mod );
+
+		// 概要は日本語で掴ませ、Nexus へは「記事 → 議論ページ → 原ページ」の順に誘導する（$article_id は上で算出済み）。
+		$actions = array();
+		if ( $article_id > 0 ) {
+			$actions[] = '<a class="sevendtd-nexus-action-primary" href="' . esc_url( get_permalink( $article_id ) ) . '">📝 日本語解説を読む</a>';
+		}
+		$actions[] = '<a href="' . esc_url( $discussion_url ) . '">このMODを語る</a>';
+		$actions[] = '<a href="' . esc_url( $mod_url ) . '" target="_blank" rel="noopener noreferrer">Nexus 原ページへ ↗</a>';
+		$actions_html = '<div class="sevendtd-nexus-actions">' . implode( '<span class="sevendtd-nexus-action-sep"> / </span>', $actions ) . '</div>';
+
+		// 記事抜粋（日本語）を表示しているときは Nexus 原文を title 属性で添える（透明性のため）。
+		$summary_attr = ( ! empty( $summary_is_ja ) && '' !== $summary_en ) ? ' title="' . esc_attr( wp_trim_words( $summary_en, 40, '...' ) ) . '"' : '';
 
 		$items[] = '<article class="sevendtd-nexus-card">'
 			. $cover_html
 			. $header_badges_html
 			. '<h3 class="sevendtd-nexus-card-title"><a href="' . esc_url( $mod_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( $title ) . '</a></h3>'
 			. ( ! empty( $args['compact_meta'] ) ? $meta_html : '' )
-			. '<p>' . esc_html( $summary ) . '</p>'
+			. '<p class="sevendtd-nexus-summary"' . $summary_attr . '>' . esc_html( $summary ) . '</p>'
 			. $indicators_html
 			. ( empty( $args['compact_meta'] ) ? $meta_html : '' )
-			. '<div class="sevendtd-nexus-actions"><a href="' . esc_url( $mod_url ) . '" target="_blank" rel="noopener noreferrer">Nexus Mods 原ページへ</a> / <a href="' . esc_url( $discussion_url ) . '">このMODを語る</a></div>'
+			. $actions_html
 			. $memo_html
 			. '</article>';
 
