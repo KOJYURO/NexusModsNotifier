@@ -2930,6 +2930,109 @@ function sevendtd_nb_render_categories_shortcode( $atts ) {
 add_shortcode( 'sevendtd_nexus_mod_categories', 'sevendtd_nb_render_categories_shortcode' );
 
 /**
+ * 解説記事 or 承認コメントがある「注目MOD」の mod_id 集合を返す。
+ *
+ * @return array<int,int>
+ */
+function sevendtd_nb_get_featured_mod_ids() {
+	global $wpdb;
+	$articled  = $wpdb->get_col( "SELECT DISTINCT pm.meta_value FROM {$wpdb->postmeta} pm JOIN {$wpdb->posts} p ON p.ID = pm.post_id AND p.post_status = 'publish' AND p.post_type = 'post' WHERE pm.meta_key = '_sevendtd_nexus_mod_id'" );
+	$commented = $wpdb->get_col( $wpdb->prepare( "SELECT DISTINCT pm.meta_value FROM {$wpdb->comments} c JOIN {$wpdb->posts} p ON p.ID = c.comment_post_ID AND p.post_type = %s JOIN {$wpdb->postmeta} pm ON pm.post_id = p.ID AND pm.meta_key = 'nexus_mod_id' WHERE c.comment_approved = '1'", 'sevendtd_nexus_mod' ) );
+
+	$ids = array();
+	foreach ( array_merge( (array) $articled, (array) $commented ) as $m ) {
+		$m = (int) $m;
+		if ( $m > 0 ) {
+			$ids[ $m ] = true;
+		}
+	}
+	return array_keys( $ids );
+}
+
+/**
+ * 注目MOD（記事/コメントあり）を人気(Endorse)順で取得する。
+ *
+ * legacyModsByDomain で一括取得（存在しない mod_id は無視される）。
+ *
+ * @param int $limit 件数.
+ *
+ * @return array<int,array<string,mixed>>
+ */
+function sevendtd_nb_get_featured_mods( $limit = 12 ) {
+	$limit     = max( 1, min( 24, absint( $limit ) ) );
+	$cache_key = 'sevendtd_nb_featured_v1';
+	$cached    = get_transient( $cache_key );
+
+	if ( false === $cached || ! is_array( $cached ) ) {
+		$ids    = sevendtd_nb_get_featured_mod_ids();
+		$cached = array();
+		if ( ! empty( $ids ) ) {
+			$gd    = sevendtd_nb_get_game_domain();
+			$input = array();
+			foreach ( array_slice( $ids, 0, 80 ) as $mid ) {
+				$input[] = array( 'gameDomain' => $gd, 'modId' => (int) $mid );
+			}
+			$gql = 'query($ids: [CompositeDomainWithIdInput!]!) {'
+				. ' legacyModsByDomain(ids: $ids, offset: 0, count: 80) {'
+				. ' nodes { modId name summary version author uploader { name } updatedAt createdAt endorsements downloads pictureUrl category modCategory { categoryId name } } } }';
+			$res   = sevendtd_nb_gql_request( $gql, array( 'ids' => $input ) );
+			$nodes = ( ! empty( $res['ok'] ) && ! empty( $res['data']['legacyModsByDomain']['nodes'] ) )
+				? $res['data']['legacyModsByDomain']['nodes']
+				: array();
+			foreach ( $nodes as $node ) {
+				if ( is_array( $node ) && isset( $node['modId'] ) ) {
+					$cached[] = sevendtd_nb_map_gql_mod( $node );
+				}
+			}
+			usort(
+				$cached,
+				static function ( $a, $b ) {
+					return (int) $b['endorsements'] <=> (int) $a['endorsements'];
+				}
+			);
+		}
+		set_transient( $cache_key, $cached, HOUR_IN_SECONDS );
+	}
+
+	return array_slice( $cached, 0, $limit );
+}
+
+/**
+ * 注目MOD（解説記事/コメントあり）を表示するショートコード（全員に公開）。
+ *
+ * @param array<string,mixed> $atts 属性.
+ *
+ * @return string
+ */
+function sevendtd_nb_render_featured_shortcode( $atts ) {
+	$atts = shortcode_atts(
+		array(
+			'title' => '📝 解説・コメントのある注目MOD',
+			'limit' => 12,
+		),
+		$atts,
+		'sevendtd_nexus_featured'
+	);
+
+	$mods = sevendtd_nb_get_featured_mods( (int) $atts['limit'] );
+
+	$output  = sevendtd_nb_get_shared_styles();
+	$output .= '<section class="sevendtd-nexus-box">';
+	$output .= '<h2>' . esc_html( (string) $atts['title'] ) . '</h2>';
+	$output .= '<p class="sevendtd-nexus-muted">7daystodie.jp に日本語の解説記事やコメントが付いている、コミュニティで注目のMODです。</p>';
+
+	if ( empty( $mods ) ) {
+		$output .= '<p class="sevendtd-nexus-muted">まだ注目MODがありません。</p></section>';
+		return $output;
+	}
+
+	$output .= sevendtd_nb_render_mod_cards( $mods, array() );
+	$output .= '</section>';
+	return $output;
+}
+add_shortcode( 'sevendtd_nexus_featured', 'sevendtd_nb_render_featured_shortcode' );
+
+/**
  * MOD 議論ページ向けリアクション定義を返す。
  *
  * @return array<string,string>
