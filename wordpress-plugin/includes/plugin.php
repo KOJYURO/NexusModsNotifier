@@ -1602,6 +1602,63 @@ function sevendtd_nb_text_has_japanese( $text ) {
  *
  * @return array<string,mixed>
  */
+/**
+ * Nexus の MOD カテゴリ名（英語）を日本語表記へ変換する。未知のものは英語のまま返す。
+ *
+ * @param string $name 英語カテゴリ名.
+ *
+ * @return string
+ */
+function sevendtd_nb_category_label_ja( $name ) {
+	$name = trim( (string) $name );
+	if ( '' === $name ) {
+		return '';
+	}
+	static $map = null;
+	if ( null === $map ) {
+		$pairs = array(
+			'Animals'               => '動物',
+			'Armor'                 => 'アーマー',
+			'Audio'                 => 'オーディオ',
+			'Backpacks'             => 'バックパック',
+			'Books and Schematics'  => '設計図・書物',
+			'Buildings'             => '建築',
+			'Bundles'               => 'バンドル',
+			'Crafting'              => 'クラフト',
+			'Creatures'             => 'クリーチャー',
+			'Environment'           => '環境',
+			'Food'                  => '食料',
+			'Gameplay'              => 'ゲームプレイ',
+			'Hud'                   => 'HUD',
+			'Items - Food'          => 'アイテム（食料）',
+			'Items and Loot'        => 'アイテム・戦利品',
+			'Maps'                  => 'マップ',
+			'Mechanics'             => 'メカニクス',
+			'Miscellaneous'         => 'その他',
+			'Modlets'               => 'モドレット',
+			'Multiplayer'           => 'マルチプレイ',
+			'Overhauls'             => '大型改変',
+			'Prefabs'               => 'プレハブ・POI',
+			'Quests'                => 'クエスト',
+			'Total Overhaul'        => '大型改変',
+			'Trader'                => 'トレーダー',
+			'User Interface'        => 'UI',
+			'Utilities'             => 'ユーティリティ',
+			'Vehicles'              => '車両',
+			'Visuals and Graphics'  => 'ビジュアル・グラフィック',
+			'Weapons'               => '武器',
+			'XML Edits'             => 'XML編集',
+			'Zombies'               => 'ゾンビ',
+		);
+		$map = array();
+		foreach ( $pairs as $en => $ja ) {
+			$map[ sevendtd_safe_strtolower( $en ) ] = $ja;
+		}
+	}
+	$key = sevendtd_safe_strtolower( $name );
+	return isset( $map[ $key ] ) ? $map[ $key ] : $name;
+}
+
 function sevendtd_nb_get_category_lookup_map() {
 	static $lookup = null;
 	if ( null !== $lookup ) {
@@ -2357,7 +2414,7 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 
 		$inline_meta = array();
 		if ( '' !== $category ) {
-			$inline_meta[] = '<span class="sevendtd-nexus-pill">' . esc_html( $category ) . '</span>';
+			$inline_meta[] = '<span class="sevendtd-nexus-pill">' . esc_html( sevendtd_nb_category_label_ja( $category ) ) . '</span>';
 		}
 		if ( '' !== $version ) {
 			$inline_meta[] = '<span class="sevendtd-nexus-pill">v' . esc_html( $version ) . '</span>';
@@ -2439,7 +2496,7 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 			$cardmeta_parts[] = '<span class="cm-author">' . esc_html( $author ) . '</span>';
 		}
 		if ( '' !== $category ) {
-			$cardmeta_parts[] = '<span class="cm-cat">' . esc_html( $category ) . '</span>';
+			$cardmeta_parts[] = '<span class="cm-cat">' . esc_html( sevendtd_nb_category_label_ja( $category ) ) . '</span>';
 		}
 		if ( '' !== $version ) {
 			$cardmeta_parts[] = '<span class="cm-ver">v' . esc_html( $version ) . '</span>';
@@ -2581,7 +2638,7 @@ function sevendtd_nb_render_mod_search_shortcode( $atts ) {
 	foreach ( $categories as $category ) {
 		$option_id     = absint( isset( $category['category_id'] ) ? $category['category_id'] : 0 );
 		$option_name   = isset( $category['name'] ) ? (string) $category['name'] : (string) $category['category_name'];
-		$options_html .= '<option value="' . esc_attr( (string) $option_id ) . '"' . selected( $category_id, $option_id, false ) . '>' . esc_html( $option_name ) . '</option>';
+		$options_html .= '<option value="' . esc_attr( (string) $option_id ) . '"' . selected( $category_id, $option_id, false ) . '>' . esc_html( sevendtd_nb_category_label_ja( $option_name ) ) . '</option>';
 	}
 
 	$source_options = array(
@@ -2848,7 +2905,7 @@ function sevendtd_nb_render_categories_shortcode( $atts ) {
 
 		$output .= '<section class="sevendtd-nexus-category-block">';
 		$output .= '<details class="sevendtd-nexus-category-details"' . $open_attr . '>';
-		$output .= '<summary class="sevendtd-nexus-category-summary"><span>' . esc_html( $category_name ) . '</span><span class="sevendtd-nexus-pill">候補 ' . esc_html( (string) $category_count ) . '</span></summary>';
+		$output .= '<summary class="sevendtd-nexus-category-summary"><span>' . esc_html( sevendtd_nb_category_label_ja( $category_name ) ) . '</span><span class="sevendtd-nexus-pill">候補 ' . esc_html( (string) $category_count ) . '</span></summary>';
 		$output .= '<div class="sevendtd-nexus-category-body">';
 
 		if ( ! empty( $result['message'] ) ) {
