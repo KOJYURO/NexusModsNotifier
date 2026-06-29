@@ -947,10 +947,19 @@ function sevendtd_nb_get_mod_url( array $mod ) {
 function sevendtd_nb_get_mod_updated_label( array $mod ) {
 	$timestamp = sevendtd_nb_get_mod_value( $mod, array( 'updated_timestamp', 'updated_time' ) );
 	if ( '' !== $timestamp && ctype_digit( $timestamp ) ) {
-		return wp_date( 'Y-m-d H:i', (int) $timestamp );
+		return wp_date( 'Y-m-d', (int) $timestamp );
 	}
 
-	return sevendtd_nb_get_mod_value( $mod, array( 'updated_at', 'updated_date' ) );
+	// GraphQL は ISO8601 文字列（例 2026-06-29T14:40:19Z）。日付のみへ整形する。
+	$date_text = sevendtd_nb_get_mod_value( $mod, array( 'updated_at', 'updated_date' ) );
+	if ( '' !== $date_text ) {
+		$parsed = strtotime( $date_text );
+		if ( false !== $parsed ) {
+			return wp_date( 'Y-m-d', $parsed );
+		}
+	}
+
+	return $date_text;
 }
 
 /**
@@ -2149,6 +2158,9 @@ function sevendtd_nb_get_shared_styles() {
 	.sevendtd-nexus-action-primary{background:#1e4c3c;color:#fff !important;padding:6px 12px;border-radius:999px;border-bottom:none !important}
 	.sevendtd-nexus-action-primary:hover{background:#2a6a52}
 	.sevendtd-nexus-action-sep{color:#9fb4aa}
+	.sevendtd-nexus-cardmeta{margin:6px 0 0;font-size:12px;color:#6b7d74;display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center;line-height:1.5}
+	.sevendtd-nexus-cardmeta .cm-author{font-weight:600;color:#46685b}
+	.sevendtd-nexus-cardmeta .cm-sep{color:#c0cec7}
 	.sevendtd-nexus-summary{margin:8px 0 4px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 	.sevendtd-nexus-translate{display:inline-block;margin:0 0 8px;font-size:12px;color:#3a6f59;text-decoration:none}
 	.sevendtd-nexus-translate:hover{text-decoration:underline}
@@ -2421,11 +2433,29 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 				. '</div>';
 		}
 
+		// 本家 Nexus と同等の最低限メタ（作者・カテゴリ・版・更新日）をコンパクト1行で表示。
+		$cardmeta_parts = array();
+		if ( '' !== $author ) {
+			$cardmeta_parts[] = '<span class="cm-author">' . esc_html( $author ) . '</span>';
+		}
+		if ( '' !== $category ) {
+			$cardmeta_parts[] = '<span class="cm-cat">' . esc_html( $category ) . '</span>';
+		}
+		if ( '' !== $version ) {
+			$cardmeta_parts[] = '<span class="cm-ver">v' . esc_html( $version ) . '</span>';
+		}
+		if ( '' !== $updated ) {
+			$cardmeta_parts[] = '<span class="cm-upd">更新 ' . esc_html( $updated ) . '</span>';
+		}
+		$cardmeta_html = ! empty( $cardmeta_parts )
+			? '<div class="sevendtd-nexus-cardmeta">' . implode( '<span class="cm-sep">・</span>', $cardmeta_parts ) . '</div>'
+			: '';
+
 		$items[] = '<article class="sevendtd-nexus-card">'
 			. $cover_html
 			. $header_badges_html
 			. '<h3 class="sevendtd-nexus-card-title"><a href="' . esc_url( $mod_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html( $title ) . '</a></h3>'
-			. ( ! empty( $args['compact_meta'] ) ? $meta_html : '' )
+			. ( ! empty( $args['compact_meta'] ) ? $meta_html : $cardmeta_html )
 			. '<p class="sevendtd-nexus-summary"' . $summary_attr . '>' . esc_html( $summary ) . '</p>'
 			. $translate_html
 			. $indicators_html
