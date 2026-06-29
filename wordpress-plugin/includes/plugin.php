@@ -2460,9 +2460,7 @@ function sevendtd_nb_render_mod_search_shortcode( $atts ) {
 		'sevendtd_nexus_mod_search'
 	);
 
-	if ( ! sevendtd_nb_current_user_can_use_tools() ) {
-		return sevendtd_nb_render_tool_access_notice( 'Nexus Mods 検索' );
-	}
+	// 公開 discovery（検索）は匿名で利用可。Nexus Mods より keyless GraphQL V2 の匿名公開モデルを承認済み（2026-06）。
 
 	$has_request = isset( $_GET['nb_mod_query'] ) || isset( $_GET['nb_mod_category'] ) || isset( $_GET['nb_my_mods'] );
 	$nonce_valid = false;
@@ -2620,9 +2618,7 @@ function sevendtd_nb_render_weekly_ranking_shortcode( $atts ) {
 		'sevendtd_nexus_weekly_rank'
 	);
 
-	if ( ! sevendtd_nb_current_user_can_use_tools() ) {
-		return sevendtd_nb_render_tool_access_notice( '今週の更新重要度ランキング' );
-	}
+	// 公開 discovery（ランキング）は匿名で利用可（Nexus 承認済みの匿名公開モデル）。
 
 	$limit = max( 3, min( 20, absint( $atts['limit'] ) ) );
 	$mods  = sevendtd_nb_get_merged_feed_mods();
@@ -2697,9 +2693,7 @@ function sevendtd_nb_render_categories_shortcode( $atts ) {
 		'sevendtd_nexus_mod_categories'
 	);
 
-	if ( ! sevendtd_nb_current_user_can_use_tools() ) {
-		return sevendtd_nb_render_tool_access_notice( 'カテゴリ別 MOD リスト' );
-	}
+	// 公開 discovery（カテゴリ別一覧）は匿名で利用可（Nexus 承認済みの匿名公開モデル）。
 
 	$per_category   = max( 1, min( 12, absint( $atts['per_category'] ) ) );
 	$max_categories = max( 1, min( 12, absint( $atts['max_categories'] ) ) );

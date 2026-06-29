@@ -23,8 +23,8 @@ Nexus Mods API への直接アクセスは WordPress plugin 側に集約し、Di
 
 ## Current Status
 
-- **API モデルを公開 GraphQL V2 へ移行しました（2026-06）。** Nexus Mods サポートの助言（個人キー＋サーバーキャッシュは公開アプリ非対応）を受け、discovery は `https://api.nexusmods.com/v2/graphql` の公開クエリ（**APIキー不要・登録不要・公開データのみ**）に作り替えました。詳細は `wordpress-plugin/README.md` の "Acceptable Use (AUP) compliance" を参照。
-- サーバー側に API キーを保存せず、キーによる自動ポーリングも行いません。ファイルのミラーもせず、常に原ページへのリンクを提供します。本人確認のみ「ユーザー自身のキーをその場で」使用します（AUP 準拠）。
+- **承認取得済み（2026-06）。** Nexus Mods サポートより、本ツールの **keyless GraphQL V2 公開モデル（匿名公開）** について "Yes, it all sounds fine." と明示承認を得ました。アプリ登録/slug はユーザーログイン(SSO)を行う場合のみ必要で、discovery 機能には不要（Application-Name/Version ヘッダーの付与で十分）。キャッシュ時間は裁量で可（Nexus 側でレート制限/キャッシュを保持）。
+- discovery は公開 GraphQL V2（`api.nexusmods.com/v2/graphql`・キー/登録不要）。サーバー側キー保存・キーによる自動ポーリング・ファイルミラーは行わず、常に原ページへリンク。本人確認のみユーザー自身のキーをその場で使用。
 - この公開スナップショットでは secrets、runtime state、log、pid などの運用生成物は含めていません。
 
 ## English Summary
