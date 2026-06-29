@@ -2141,6 +2141,11 @@ function sevendtd_nb_get_shared_styles() {
 	.sevendtd-nexus-summary{margin:8px 0 4px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 	.sevendtd-nexus-translate{display:inline-block;margin:0 0 8px;font-size:12px;color:#3a6f59;text-decoration:none}
 	.sevendtd-nexus-translate:hover{text-decoration:underline}
+	.sevendtd-nexus-reqrow{margin:8px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+	.sevendtd-nexus-reqbtn-card{font-size:12px;font-weight:700;color:#1e4c3c;background:#eef6f2;border:1px solid #cfe2d8;border-radius:999px;padding:5px 12px;cursor:pointer}
+	.sevendtd-nexus-reqbtn-card:hover:not(:disabled){background:#e2efe8}
+	.sevendtd-nexus-reqbtn-card:disabled{opacity:.6;cursor:default}
+	.sevendtd-nexus-reqmsg-card{font-size:11px;color:#5a6b63}
 	.sevendtd-nexus-preset-row{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 	.sevendtd-nexus-preset-row a{display:inline-block;padding:6px 10px;border:1px solid #c8d8cf;border-radius:999px;background:#fff;text-decoration:none;color:#1e4c3c;font-size:12px;font-weight:700}
 	.sevendtd-nexus-memo{margin-top:10px}
@@ -2231,6 +2236,23 @@ function sevendtd_nb_get_shared_scripts() {
  *
  * @return string
  */
+/**
+ * カードの「解説記事をリクエスト」ボタン用スクリプトを返す（1リクエストにつき1回だけ出力）。
+ *
+ * @return string
+ */
+function sevendtd_nb_get_card_request_script() {
+	static $printed = false;
+	if ( $printed ) {
+		return '';
+	}
+	$printed = true;
+
+	$endpoint = wp_json_encode( esc_url_raw( rest_url( 'sevendtd/v1/article-request' ) ) );
+
+	return '<script>(function(){if(window.sevendtdReqCardBound){return;}window.sevendtdReqCardBound=true;var EP=' . $endpoint . ';document.addEventListener("click",function(e){var btn=e.target.closest(".sevendtd-nexus-reqbtn-card");if(!btn){return;}var mod=btn.getAttribute("data-mod");if(!mod){return;}var card=btn.closest(".sevendtd-nexus-card");var msg=card?card.querySelector(".sevendtd-nexus-reqmsg-card"):null;btn.disabled=true;if(msg){msg.textContent="送信中…";}fetch(EP,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({mod_id:mod})}).then(function(r){return r.json();}).then(function(d){if(msg){msg.textContent=(d&&d.message)||"";}if(!(d&&d.ok)){btn.disabled=false;}}).catch(function(){if(msg){msg.textContent="送信に失敗しました。";}btn.disabled=false;});});})();</script>';
+}
+
 function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 	$args = array_merge(
 		array(
@@ -2369,6 +2391,15 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 			$translate_html = '<a class="sevendtd-nexus-translate" href="' . esc_url( $translate_url ) . '" target="_blank" rel="noopener noreferrer">🌐 日本語に翻訳</a>';
 		}
 
+		// 解説記事が無い MOD には、その場でリクエストできるボタンを出す（記事化の優先度を可視化）。
+		$request_html = '';
+		if ( $article_id <= 0 && '' !== $mod_id_str ) {
+			$request_html = '<div class="sevendtd-nexus-reqrow">'
+				. '<button type="button" class="sevendtd-nexus-reqbtn-card" data-mod="' . esc_attr( $mod_id_str ) . '">📝 解説記事をリクエスト</button>'
+				. '<span class="sevendtd-nexus-reqmsg-card" aria-live="polite"></span>'
+				. '</div>';
+		}
+
 		$items[] = '<article class="sevendtd-nexus-card">'
 			. $cover_html
 			. $header_badges_html
@@ -2378,6 +2409,7 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 			. $translate_html
 			. $indicators_html
 			. $actions_html
+			. $request_html
 			. '</article>';
 
 		$snapshot_store[ $mod_key ] = array(
@@ -2397,8 +2429,8 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 		return '<p class="sevendtd-nexus-muted">条件に一致する MOD がありません。</p>';
 	}
 
-	// 導入メモ機能は撤去したため、メモ用スクリプトは出力しない。
-	return '<div class="sevendtd-nexus-grid">' . implode( '', $items ) . '</div>';
+	// 導入メモ機能は撤去。記事リクエストボタン用スクリプトのみ（1回だけ）出力する。
+	return '<div class="sevendtd-nexus-grid">' . implode( '', $items ) . '</div>' . sevendtd_nb_get_card_request_script();
 }
 
 /**
