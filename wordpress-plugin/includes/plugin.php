@@ -261,8 +261,19 @@ function sevendtd_nb_render_settings_page() {
 					<td><input id="sevendtd_nb_discord_notify_max_age_hours" name="sevendtd_nb_settings[discord_notify_max_age_hours]" type="number" min="1" max="720" step="1" value="<?php echo esc_attr( (string) $settings['discord_notify_max_age_hours'] ); ?>"></td>
 				</tr>
 				<tr>
-					<th scope="row"><label for="sevendtd_nb_deepl_api_key">DeepL API キー（MOD解説日本語訳）</label></th>
-					<td><input id="sevendtd_nb_deepl_api_key" name="sevendtd_nb_settings[deepl_api_key]" type="password" class="regular-text" value="<?php echo esc_attr( (string) $settings['deepl_api_key'] ); ?>"><p class="description">DeepL 無料プランは末尾が :fx のキーです。空欄の場合は翻訳を行いません。</p></td>
+					<th scope="row"><label for="sevendtd_nb_deepl_api_key">DeepL API キー（カードの日本語サマリー）</label></th>
+					<td><input id="sevendtd_nb_deepl_api_key" name="sevendtd_nb_settings[deepl_api_key]" type="password" class="regular-text" value="<?php echo esc_attr( (string) $settings['deepl_api_key'] ); ?>"><p class="description">DeepL 無料プランは末尾が <code>:fx</code> のキーです。設定すると、解説記事が無い MOD のカードでも英語サマリーを自動で日本語化します（mod 単位で30日キャッシュ）。空欄の場合は英語表示＋「自分で翻訳」リンクになります。
+					<?php
+					$cap  = sevendtd_nb_deepl_monthly_cap();
+					$used = sevendtd_nb_deepl_used_this_month();
+					printf(
+						'<br><strong>今月の使用量:</strong> %s / %s 文字（残り %s）。無料枠50万文字/月を超えない上限で運用します。',
+						esc_html( number_format( $used ) ),
+						esc_html( number_format( $cap ) ),
+						esc_html( number_format( max( 0, $cap - $used ) ) )
+					);
+					?>
+					</p></td>
 				</tr>
 			</table>
 			<?php submit_button(); ?>
@@ -2267,6 +2278,9 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 		return '<p class="sevendtd-nexus-muted">表示できる MOD がありません。</p>';
 	}
 
+	// 記事が無い MOD のサマリーを DeepL でまとめて和訳しキャッシュ（無料枠内・1ページ1リクエスト）。
+	sevendtd_nb_prime_summary_ja_cache( $mods );
+
 	$items          = array();
 	$snapshot_store = sevendtd_nb_get_mod_snapshot_store();
 	$store_changed  = false;
@@ -2291,15 +2305,22 @@ function sevendtd_nb_render_mod_cards( array $mods, array $args = array() ) {
 		$article_id      = sevendtd_nb_get_linked_article_id( $mod_id_str );
 		$article_excerpt = $article_id > 0 ? trim( wp_strip_all_tags( get_the_excerpt( $article_id ) ) ) : '';
 		if ( '' !== $article_excerpt ) {
+			// 解説記事があれば、その日本語抜粋を最優先（人の手による本文）。
 			$summary       = $article_excerpt;
 			$summary_is_ja = true;
-		} elseif ( '' !== $summary_en ) {
-			// 全文を保持（表示は CSS で2行クランプ）し、ユーザーが自分で翻訳できるようにする。
-			$summary       = $summary_en;
-			$summary_is_ja = false;
 		} else {
-			$summary       = '紹介文はまだ取得できていません。';
-			$summary_is_ja = false;
+			$summary_ja = sevendtd_nb_get_mod_summary_ja( $mod ); // DeepL 自動和訳（prime 済みキャッシュ）。
+			if ( '' !== $summary_ja ) {
+				$summary       = $summary_ja;
+				$summary_is_ja = true;
+			} elseif ( '' !== $summary_en ) {
+				// キー未設定・枠超過などで未訳のときだけ英語（＋自分で翻訳リンク）。
+				$summary       = $summary_en;
+				$summary_is_ja = false;
+			} else {
+				$summary       = '紹介文はまだ取得できていません。';
+				$summary_is_ja = false;
+			}
 		}
 		$mod_key         = sevendtd_nb_get_mod_key( $mod );
 		$score           = sevendtd_nb_get_mod_score( $mod );
@@ -2933,6 +2954,12 @@ function sevendtd_nb_translate_to_japanese( $text ) {
 		return (string) $cached;
 	}
 
+	// 無料枠（月50万文字）を超えないようバジェット確認。超過しそうなら翻訳しない。
+	$chars = function_exists( 'mb_strlen' ) ? mb_strlen( $text ) : strlen( $text );
+	if ( sevendtd_nb_deepl_budget_remaining() < $chars ) {
+		return '';
+	}
+
 	// 無料プランは :fx で終わるキー
 	$endpoint = ( false !== strpos( $api_key, ':fx' ) )
 		? 'https://api-free.deepl.com/v2/translate'
@@ -2959,10 +2986,232 @@ function sevendtd_nb_translate_to_japanese( $text ) {
 	$ja   = isset( $body['translations'][0]['text'] ) ? (string) $body['translations'][0]['text'] : '';
 
 	if ( '' !== $ja ) {
-		set_transient( $cache_key, $ja, DAY_IN_SECONDS );
+		sevendtd_nb_deepl_add_usage( $chars );
+		set_transient( $cache_key, $ja, 30 * DAY_IN_SECONDS );
 	}
 
 	return $ja;
+}
+
+/**
+ * DeepL APIキーを解決する（設定→定数→環境変数の順）。
+ *
+ * @return string
+ */
+function sevendtd_nb_deepl_key() {
+	$settings = sevendtd_nb_get_settings();
+	$k        = trim( (string) ( isset( $settings['deepl_api_key'] ) ? $settings['deepl_api_key'] : '' ) );
+	if ( '' === $k && defined( 'SEVENDTD_NB_DEEPL_API_KEY' ) ) {
+		$k = trim( (string) SEVENDTD_NB_DEEPL_API_KEY );
+	}
+	if ( '' === $k ) {
+		$k = trim( (string) getenv( 'SEVENDTD_NB_DEEPL_API_KEY' ) );
+	}
+	if ( '' === $k ) {
+		$k = trim( (string) getenv( 'DEEPL_API_KEY' ) );
+	}
+	return $k;
+}
+
+/**
+ * DeepL 無料枠の月間文字数上限（500,000 に対し余裕を持って 480,000。フィルタ可）。
+ *
+ * @return int
+ */
+function sevendtd_nb_deepl_monthly_cap() {
+	return (int) apply_filters( 'sevendtd_nb_deepl_monthly_cap', 480000 );
+}
+
+/**
+ * 今月の DeepL 使用文字数（月替わりで 0 とみなす）。
+ *
+ * @return int
+ */
+function sevendtd_nb_deepl_used_this_month() {
+	$usage = get_option( 'sevendtd_nb_deepl_usage', array() );
+	if ( ! is_array( $usage ) || ! isset( $usage['month'] ) || $usage['month'] !== gmdate( 'Y-m' ) ) {
+		return 0;
+	}
+	return (int) ( isset( $usage['chars'] ) ? $usage['chars'] : 0 );
+}
+
+/**
+ * 今月の残りバジェット（文字数）。
+ *
+ * @return int
+ */
+function sevendtd_nb_deepl_budget_remaining() {
+	return max( 0, sevendtd_nb_deepl_monthly_cap() - sevendtd_nb_deepl_used_this_month() );
+}
+
+/**
+ * DeepL 使用文字数を加算（月替わりでリセット）。
+ *
+ * @param int $chars 文字数.
+ *
+ * @return void
+ */
+function sevendtd_nb_deepl_add_usage( $chars ) {
+	$month = gmdate( 'Y-m' );
+	$usage = get_option( 'sevendtd_nb_deepl_usage', array() );
+	if ( ! is_array( $usage ) || ! isset( $usage['month'] ) || $usage['month'] !== $month ) {
+		$usage = array( 'month' => $month, 'chars' => 0 );
+	}
+	$usage['chars'] = (int) ( isset( $usage['chars'] ) ? $usage['chars'] : 0 ) + max( 0, (int) $chars );
+	update_option( 'sevendtd_nb_deepl_usage', $usage, false );
+}
+
+/**
+ * 複数テキストを 1 回のリクエストで日本語化する（DeepL JSON 複数 text）。
+ *
+ * バジェット内に収まる分だけ翻訳し、超過分は '' を返す。返り値は入力と同じ添字。
+ *
+ * @param array<int,string> $texts テキスト配列.
+ *
+ * @return array<int,string>
+ */
+function sevendtd_nb_translate_batch_to_japanese( array $texts ) {
+	$out = array();
+	foreach ( $texts as $i => $t ) {
+		$out[ $i ] = '';
+	}
+
+	$api_key = sevendtd_nb_deepl_key();
+	if ( '' === $api_key ) {
+		return $out;
+	}
+
+	$remaining = sevendtd_nb_deepl_budget_remaining();
+	$send      = array();
+	$send_idx  = array();
+	$used      = 0;
+	foreach ( $texts as $i => $t ) {
+		$t = trim( (string) $t );
+		if ( '' === $t ) {
+			continue;
+		}
+		$len = function_exists( 'mb_strlen' ) ? mb_strlen( $t ) : strlen( $t );
+		if ( $used + $len > $remaining ) {
+			continue; // 無料枠超過分はスキップ（英語フォールバック）。
+		}
+		$send[]     = $t;
+		$send_idx[] = $i;
+		$used      += $len;
+	}
+	if ( empty( $send ) ) {
+		return $out;
+	}
+
+	$endpoint = ( false !== strpos( $api_key, ':fx' ) )
+		? 'https://api-free.deepl.com/v2/translate'
+		: 'https://api.deepl.com/v2/translate';
+
+	$response = wp_remote_post(
+		$endpoint,
+		array(
+			'timeout' => 15,
+			'headers' => array(
+				'Authorization' => 'DeepL-Auth-Key ' . $api_key,
+				'Content-Type'  => 'application/json',
+			),
+			'body'    => wp_json_encode(
+				array(
+					'text'        => $send,
+					'target_lang' => 'JA',
+					'source_lang' => 'EN',
+				)
+			),
+		)
+	);
+
+	if ( is_wp_error( $response ) ) {
+		return $out;
+	}
+
+	$body = json_decode( wp_remote_retrieve_body( $response ), true );
+	if ( ! isset( $body['translations'] ) || ! is_array( $body['translations'] ) ) {
+		return $out;
+	}
+
+	$translated_chars = 0;
+	foreach ( $send_idx as $k => $orig_i ) {
+		$ja = isset( $body['translations'][ $k ]['text'] ) ? (string) $body['translations'][ $k ]['text'] : '';
+		if ( '' !== $ja ) {
+			$out[ $orig_i ]    = $ja;
+			$translated_chars += function_exists( 'mb_strlen' ) ? mb_strlen( $send[ $k ] ) : strlen( $send[ $k ] );
+		}
+	}
+	if ( $translated_chars > 0 ) {
+		sevendtd_nb_deepl_add_usage( $translated_chars );
+	}
+
+	return $out;
+}
+
+/**
+ * カード描画前に、解説記事が無い MOD のサマリー和訳をまとめて 1 回でキャッシュへ流し込む。
+ *
+ * @param array<int,array<string,mixed>> $mods MOD 配列.
+ *
+ * @return void
+ */
+function sevendtd_nb_prime_summary_ja_cache( array $mods ) {
+	if ( '' === sevendtd_nb_deepl_key() ) {
+		return;
+	}
+
+	$texts = array();
+	foreach ( $mods as $mod ) {
+		if ( ! is_array( $mod ) ) {
+			continue;
+		}
+		$mid = sevendtd_nb_get_mod_value( $mod, array( 'mod_id', 'id' ) );
+		if ( sevendtd_nb_get_linked_article_id( (string) $mid ) > 0 ) {
+			continue; // 記事があるものは記事抜粋を使う。
+		}
+		$source = sevendtd_nb_cleanup_mod_summary_text( sevendtd_nb_get_mod_value( $mod, array( 'summary', 'description' ) ) );
+		if ( '' === $source || sevendtd_nb_text_has_japanese( $source ) ) {
+			continue;
+		}
+		$ck = 'sevendtd_nb_sumja_' . ( '' !== $mid ? $mid : 'x' ) . '_' . substr( md5( $source ), 0, 10 );
+		if ( false !== get_transient( $ck ) || isset( $texts[ $ck ] ) ) {
+			continue;
+		}
+		$texts[ $ck ] = $source;
+	}
+
+	if ( empty( $texts ) ) {
+		return;
+	}
+
+	$cks  = array_keys( $texts );
+	$ja   = sevendtd_nb_translate_batch_to_japanese( array_values( $texts ) );
+	foreach ( $cks as $i => $ck ) {
+		if ( ! empty( $ja[ $i ] ) ) {
+			set_transient( $ck, $ja[ $i ], 30 * DAY_IN_SECONDS );
+		}
+	}
+}
+
+/**
+ * MOD サマリーの日本語訳（キャッシュ読み取りのみ。翻訳は prime 側で実施）。
+ *
+ * @param array<string,mixed> $mod MOD データ.
+ *
+ * @return string
+ */
+function sevendtd_nb_get_mod_summary_ja( array $mod ) {
+	$source = sevendtd_nb_cleanup_mod_summary_text( sevendtd_nb_get_mod_value( $mod, array( 'summary', 'description' ) ) );
+	if ( '' === $source ) {
+		return '';
+	}
+	if ( sevendtd_nb_text_has_japanese( $source ) ) {
+		return $source;
+	}
+	$mid    = sevendtd_nb_get_mod_value( $mod, array( 'mod_id', 'id' ) );
+	$ck     = 'sevendtd_nb_sumja_' . ( '' !== $mid ? $mid : 'x' ) . '_' . substr( md5( $source ), 0, 10 );
+	$cached = get_transient( $ck );
+	return false !== $cached ? (string) $cached : '';
 }
 
 /**
